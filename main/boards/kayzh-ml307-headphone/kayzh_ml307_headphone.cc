@@ -90,22 +90,11 @@ private:
     }
 
     void InitializeButtons() {
-        // 中键：单击切换对话状态；双击切换 WiFi/ML307；长按恢复音量
-        m_button_.OnClick([this]() {
-            auto& app = Application::GetInstance();
-            if (GetNetworkType() == NetworkType::WIFI) {
-                if (app.GetDeviceState() == kDeviceStateStarting) {
-                    auto& wifi_board = static_cast<WifiBoard&>(GetCurrentBoard());
-                    wifi_board.EnterWifiConfigMode();
-                    return;
-                }
-            }
-            app.ToggleChatState();
-        });
+        // 中键：单击触发连续对话；双击（启动态）切换网络
+        m_button_.OnClick([]() { Application::GetInstance().ToggleChatState(); });
         m_button_.OnDoubleClick([this]() {
-            auto& app = Application::GetInstance();
-            if (app.GetDeviceState() == kDeviceStateStarting ||
-                app.GetDeviceState() == kDeviceStateWifiConfiguring) {
+            auto state = Application::GetInstance().GetDeviceState();
+            if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
                 SwitchNetworkType();
             }
         });
@@ -124,12 +113,31 @@ private:
             GetDisplay()->ShowNotification(Lang::Strings::MUTED);
         });
 
-        // 右键：按下开始聆听，松开停止
-        r_button_.OnPressDown([]() { Application::GetInstance().StartListening(); });
-        r_button_.OnPressUp([]() { Application::GetInstance().StopListening(); });
+        // 右键：单击循环背光亮度（100/60/30/10），长按进入 WiFi 配网（仅 WiFi）
+        r_button_.OnClick([this]() {
+            static const uint8_t kLevels[] = {100, 60, 30, 10};
+            auto backlight = GetBacklight();
+            uint8_t next = kLevels[0];
+            for (uint8_t level : kLevels) {
+                if (level < backlight->brightness()) {
+                    next = level;
+                    break;
+                }
+            }
+            backlight->SetBrightness(next, true);
+            GetDisplay()->ShowNotification("亮度 " + std::to_string(next));
+        });
+        r_button_.OnLongPress([this]() {
+            if (GetNetworkType() != NetworkType::WIFI) {
+                GetDisplay()->ShowNotification("配网仅支持 Wi-Fi");
+                return;
+            }
+            auto& wifi_board = static_cast<WifiBoard&>(GetCurrentBoard());
+            wifi_board.EnterWifiConfigMode();
+        });
 
-        // 左键：长按切换主题（亮/暗）
-        l_button_.OnLongPress([]() {
+        // 左键：单击切换主题（亮/暗）
+        l_button_.OnClick([]() {
             Settings settings("display", true);
             std::string theme = settings.GetString("theme", "light");
             theme = theme == "light" ? "dark" : "light";

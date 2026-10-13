@@ -1,0 +1,9 @@
+{
+    "type": "kayzh-ml307-headphone",
+    "target": "esp32s3",
+    "builds": [
+        {
+            "name": "kayzh-ml307-headphone"
+        }
+    ]
+}

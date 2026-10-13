@@ -263,6 +263,12 @@ choice BOARD_TYPE
     config BOARD_TYPE_JIUCHUAN
         bool "Jiuchuan ESP32-S3 (九川智能)"
         depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_KAYZH_ML307_HEADPHONE
+        bool "Kayzh ML307 Headphone (睡神耳机聊天伴侣uac耳机版)"
+        depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_KAYZH_ROBOT_MAK
+        bool "Kayzh Robot Mak (桌面机器人盲盒改装版外壳)"
+        depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_KEVIN_BOX_2
         bool "Kevin Box 2"
         depends on IDF_TARGET_ESP32S3
@@ -744,7 +750,7 @@ endchoice
 
 
 choice DISPLAY_LCD_TYPE
-    depends on BOARD_TYPE_BREAD_COMPACT_WIFI_LCD || BOARD_TYPE_BREAD_COMPACT_ESP32_LCD || BOARD_TYPE_WDMOMO_CGC || BOARD_TYPE_BREAD_COMPACT_WIFI_CAM || (BOARD_TYPE_WK_ESP32S3_DEV && WK_ESP32S3_DEV_DISPLAY_LCD)
+    depends on BOARD_TYPE_BREAD_COMPACT_WIFI_LCD || BOARD_TYPE_BREAD_COMPACT_ESP32_LCD || BOARD_TYPE_WDMOMO_CGC || BOARD_TYPE_BREAD_COMPACT_WIFI_CAM || BOARD_TYPE_KAYZH_ROBOT_MAK || (BOARD_TYPE_WK_ESP32S3_DEV && WK_ESP32S3_DEV_DISPLAY_LCD)
     prompt "LCD Type"
     default LCD_ST7789_240X320
     help

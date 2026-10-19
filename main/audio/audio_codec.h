@@ -1,14 +1,14 @@
 #ifndef _AUDIO_CODEC_H
 #define _AUDIO_CODEC_H
 
-#include <freertos/FreeRTOS.h>
-#include <freertos/event_groups.h>
 #include <driver/i2s_std.h>
 #include <esp_idf_version.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/event_groups.h>
 
-#include <vector>
-#include <string>
 #include <functional>
+#include <string>
+#include <vector>
 
 #include "board.h"
 
@@ -28,7 +28,7 @@ class AudioCodec {
 public:
     AudioCodec();
     virtual ~AudioCodec();
-    
+
     virtual void SetOutputVolume(int volume);
     virtual void SetInputGain(float gain);
     virtual void EnableInput(bool enable);
@@ -49,6 +49,10 @@ public:
     inline bool input_enabled() const { return input_enabled_; }
     inline bool output_enabled() const { return output_enabled_; }
 
+    // Optional AFE capabilities. Boards with a noisy or weak analog front end
+    // can request extra processing without changing the default for every codec.
+    virtual bool needs_noise_suppression() const { return false; }
+
 protected:
     i2s_chan_handle_t tx_handle_ = nullptr;
     i2s_chan_handle_t rx_handle_ = nullptr;
@@ -68,4 +72,4 @@ protected:
     virtual int Write(const int16_t* data, int samples) = 0;
 };
 
-#endif // _AUDIO_CODEC_H
+#endif  // _AUDIO_CODEC_H

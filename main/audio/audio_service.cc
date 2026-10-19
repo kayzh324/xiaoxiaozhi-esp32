@@ -616,6 +616,17 @@ bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> pa
                        audio_decode_queue_.size() < MAX_DECODE_PACKETS_IN_QUEUE;
             });
         } else {
+            // This should only happen after a very large backlog (the queue holds
+            // tens of seconds of audio). Surface it instead of silently cutting
+            // the tail off a long TTS reply.
+            decode_drop_count_++;
+            const int64_t now = esp_timer_get_time();
+            if (now - last_decode_drop_log_time_ >= 1000000) {
+                last_decode_drop_log_time_ = now;
+                ESP_LOGW(TAG,
+                         "Decode queue full (%u packets), dropping downlink audio (dropped %u)",
+                         (unsigned)MAX_DECODE_PACKETS_IN_QUEUE, (unsigned)decode_drop_count_);
+            }
             return false;
         }
     }
@@ -737,10 +748,15 @@ void AudioService::EnableAudioTesting(bool enable) {
         xEventGroupSetBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING);
     } else {
         xEventGroupClearBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING);
-        /* Copy audio_testing_queue_ to audio_decode_queue_ */
+        /* Move audio_testing_queue_ into audio_decode_queue_. The two queues have
+         * different capacities now (downlink playback needs a much larger jitter
+         * buffer than the 10 s audio test), so move element by element. */
         std::lock_guard<std::mutex> lock(audio_queue_mutex_);
         audio_decode_queue_.clear();
-        audio_decode_queue_.swap(audio_testing_queue_);
+        while (!audio_testing_queue_.empty()) {
+            audio_decode_queue_.push_back(std::move(audio_testing_queue_.front()));
+            audio_testing_queue_.pop_front();
+        }
         if (!audio_decode_queue_.empty()) {
             playback_drained_notified_ = false;
         }

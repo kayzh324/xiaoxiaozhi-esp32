@@ -40,7 +40,12 @@
 #define OPUS_FRAME_DURATION_MS 60
 #define MAX_ENCODE_TASKS_IN_QUEUE 2
 #define MAX_PLAYBACK_TASKS_IN_QUEUE 2
-#define MAX_DECODE_PACKETS_IN_QUEUE (1200 / OPUS_FRAME_DURATION_MS)
+// Downlink audio is not realtime-critical in the same way as the microphone:
+// the server may burst a whole TTS sentence faster than the speaker consumes it.
+// Dropping the overflow truncates long replies, so keep a generous jitter buffer
+// (60 s of 60 ms packets). The queue stores only Opus packets, not PCM.
+#define MAX_DECODE_AUDIO_MS 60000
+#define MAX_DECODE_PACKETS_IN_QUEUE (MAX_DECODE_AUDIO_MS / OPUS_FRAME_DURATION_MS)
 #define MAX_SEND_PACKETS_IN_QUEUE (2400 / OPUS_FRAME_DURATION_MS)
 #define AUDIO_TESTING_MAX_DURATION_MS 10000
 #define MAX_TIMESTAMPS_IN_QUEUE 3
@@ -170,6 +175,8 @@ private:
     int decoder_frame_size_ = 0;
     DebugStatistics debug_statistics_;
     int64_t last_encode_drop_log_time_ = 0;
+    uint32_t decode_drop_count_ = 0;
+    int64_t last_decode_drop_log_time_ = 0;
     srmodel_list_t* models_list_ = nullptr;
 
     EventGroupHandle_t event_group_;
@@ -180,11 +187,11 @@ private:
     TaskHandle_t opus_codec_task_handle_ = nullptr;
     std::mutex audio_queue_mutex_;
     std::condition_variable audio_queue_cv_;
-    // Testing records up to AUDIO_TESTING_MAX_DURATION_MS, then swaps into the
-    // decode queue. Both queues must share this capacity so swap() is valid.
+    // Testing records up to AUDIO_TESTING_MAX_DURATION_MS and is then moved into
+    // the (much larger) downlink decode queue.
     static constexpr size_t kAudioTestingPacketCapacity =
         AUDIO_TESTING_MAX_DURATION_MS / OPUS_FRAME_DURATION_MS;
-    FixedQueue<std::unique_ptr<AudioStreamPacket>, kAudioTestingPacketCapacity> audio_decode_queue_;
+    FixedQueue<std::unique_ptr<AudioStreamPacket>, MAX_DECODE_PACKETS_IN_QUEUE> audio_decode_queue_;
     FixedQueue<std::unique_ptr<AudioStreamPacket>, MAX_SEND_PACKETS_IN_QUEUE> audio_send_queue_;
     FixedQueue<std::unique_ptr<AudioStreamPacket>, kAudioTestingPacketCapacity>
         audio_testing_queue_;

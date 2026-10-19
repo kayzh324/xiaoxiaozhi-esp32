@@ -22,6 +22,9 @@ public:
     ~Ab13xAudioCodec() override;
 
     void SetOutputVolume(int volume) override;
+    // The 3.5mm microphone path on this adapter has a low-level but audible
+    // hiss floor; ask the AFE to apply WebRTC noise suppression.
+    bool needs_noise_suppression() const override { return true; }
 
 protected:
     int Read(int16_t* dest, int samples) override;
@@ -88,6 +91,7 @@ private:
                           int16_t* dest);
     static void ExpandFromMono(const int16_t* src, int frames, int channels, int subframe_size,
                                uint8_t* dest);
+    void ApplyGainAndLimiter(int16_t* data, int samples, float gain);
 
     QueueHandle_t event_queue_ = nullptr;
     TaskHandle_t event_task_ = nullptr;
@@ -105,6 +109,10 @@ private:
     std::atomic<bool> hw_volume_supported_{false};
     std::atomic<uint32_t> read_bytes_{0};
     std::atomic<uint32_t> write_bytes_{0};
+    std::atomic<uint32_t> write_errors_{0};
+    int64_t last_write_error_log_time_ = 0;
+    // Capture limiter state, only touched by Read().
+    float mic_limiter_gain_ = 1.0f;
     // Diagnostics: read_calls_ tells whether AudioService asks for capture at all,
     // rx_done_events_ tells whether the UAC driver sees inbound packets, and
     // mic_peak_/mic_abs_sum_/mic_abs_count_ separate "streaming but silent" from

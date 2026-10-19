@@ -3,7 +3,10 @@
     "target": "esp32s3",
     "builds": [
         {
-            "name": "kayzh-ml307-headphone"
+            "name": "kayzh-ml307-headphone",
+            "sdkconfig_append": [
+                "CONFIG_USE_SERVER_AEC=y"
+            ]
         }
     ]
 }

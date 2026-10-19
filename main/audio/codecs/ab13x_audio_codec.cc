@@ -1,6 +1,7 @@
 #include "ab13x_audio_codec.h"
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <usb/usb_host.h>
 
 #include <algorithm>
@@ -27,16 +28,24 @@
 // is already at its ceiling: set_volume(100) makes it report 8191 (1/256 dB), i.e.
 // about +32 dB, and it will not go higher. At that maximum, normal-distance speech
 // still only peaks at 1145 (-29 dBFS) over a noise floor near -44 dBFS, so it needs
-// roughly 15-17 dB more - and only software can supply it, because the analog path is
+// roughly 20 dB more - and only software can supply it, because the analog path is
 // exhausted. Software gain cannot change the signal-to-noise ratio, only the level the
 // ASR/Opus front end sees; it is worth having because both lose effective resolution
-// on a signal this quiet.
-#define MIC_TOTAL_GAIN_DB 46.0f
-// Ceiling on the software share. At the measured +32 dB of analog gain, 14 dB of
-// software gain puts a normal-distance peak at 1145 * 5.0 = 5725 (-15 dBFS) and
-// close-talk at 4199 * 5.0 = 20995 (-4 dBFS), both clear of the 32767 rail. This also
-// caps the boost when the device reports little or no gain of its own.
+// on a signal this quiet. This headset's microphone hangs near the throat rather than
+// at the mouth, so there is no close-talk case to protect against; the limiter below
+// only catches loud transients.
+#define MIC_TOTAL_GAIN_DB 52.0f
+// Ceiling on the software share. At the measured +32 dB of analog gain, 20 dB of
+// software gain puts a normal-distance peak at 1145 * 10.0 = 11450 (-9 dBFS). The
+// output is still passed through a peak limiter, so a loud syllable cannot rail the
+// ADC-to-Opus path. This also caps the boost when the device reports little or no
+// gain of its own.
 #define MIC_MAX_SOFTWARE_GAIN_DB 20.0f
+// Peak limiter applied after software gain. Speech below the knee is unchanged;
+// samples above it are scaled down over a short release so loud transients cannot
+// wrap around the 16-bit range and the Opus encoder never sees a fully railed frame.
+#define MIC_LIMIT_LEVEL 30000.0f
+#define MIC_LIMIT_RELEASE_COEFF 0.1f
 // Status-log intervals the microphone may stay silent before capture is re-armed.
 #define MIC_REARM_IDLE_INTERVALS 2
 
@@ -161,19 +170,24 @@ void Ab13xAudioCodec::LogStatus() {
     const int64_t mic_abs_sum = mic_abs_sum_.exchange(0);
     const uint32_t mic_abs_count = mic_abs_count_.exchange(0);
     const int mic_avg = mic_abs_count > 0 ? static_cast<int>(mic_abs_sum / mic_abs_count) : 0;
+    const int mic_peak = mic_peak_.exchange(0);
+    auto dbfs = [](int level) { return level > 0 ? 20.0f * std::log10(level / 32768.0f) : -96.0f; };
     // The negotiated capture format is repeated here because swapping in a different
     // USB adapter changes the descriptors, and both the hardcoded 48000 Hz and the FIFO
-    // split were tuned for this one. Kept at debug level: the call itself must still
-    // happen every STATUS_LOG_INTERVAL_MS because it drives the capture watchdog below.
-    ESP_LOGD(TAG,
+    // split were tuned for this one. This line is logged at info level so field
+    // measurements are visible without rebuilding with debug logging. It must run every
+    // STATUS_LOG_INTERVAL_MS because it also drives the capture watchdog below.
+    ESP_LOGI(TAG,
              "status: speaker=%s mic=%s mic_fmt=%uHz/%uch/%ubit hw_volume=%d rx=%uB tx=%uB "
-             "read_calls=%u mic_events=%u mic_peak=%d mic_avg=%d mic_hw_gain=%d mic_rearms=%u",
+             "tx_err=%u read_calls=%u mic_events=%u mic_peak=%d(%.1f dBFS) "
+             "mic_avg=%d(%.1f dBFS) sw_gain=%.1f mic_hw_gain=%d mic_rearms=%u",
              spk_handle != nullptr ? "up" : "down", mic_handle != nullptr ? "up" : "down",
              (unsigned)mic_format.sample_freq, mic_format.channels, mic_format.bit_resolution,
              hw_volume_supported_.load() ? 1 : 0, (unsigned)read_bytes_.load(),
-             (unsigned)write_bytes_.load(), (unsigned)read_calls_.load(),
-             (unsigned)rx_done_events_.load(), (int)mic_peak_.exchange(0), mic_avg,
-             (int)mic_hw_gain_db_.load(), (unsigned)mic_rearms_.load());
+             (unsigned)write_bytes_.load(), (unsigned)write_errors_.load(),
+             (unsigned)read_calls_.load(), (unsigned)rx_done_events_.load(), mic_peak,
+             dbfs(mic_peak), mic_avg, dbfs(mic_avg), input_gain_, (int)mic_hw_gain_db_.load(),
+             (unsigned)mic_rearms_.load());
 
     // Capture watchdog. Liveness has to be judged from BOTH counters: RX_DONE only
     // fires once inbound packets cross the ringbuffer threshold, so while Read() is
@@ -183,10 +197,17 @@ void Ab13xAudioCodec::LogStatus() {
     // really stopped sending.
     const uint32_t mic_events = rx_done_events_.load();
     const uint32_t read_bytes = read_bytes_.load();
-    if (mic_handle != nullptr && mic_events == last_mic_events_ && read_bytes == last_read_bytes_) {
-        if (++mic_idle_intervals_ >= MIC_REARM_IDLE_INTERVALS) {
+    // Only judge liveness while capture is supposed to be running. During TTS or
+    // idle the input path is intentionally stopped, and suspend/resume on the
+    // microphone interface can disturb the shared AB13X device mid-playback.
+    if (mic_handle != nullptr && input_enabled_) {
+        if (mic_events == last_mic_events_ && read_bytes == last_read_bytes_) {
+            if (++mic_idle_intervals_ >= MIC_REARM_IDLE_INTERVALS) {
+                mic_idle_intervals_ = 0;
+                ReArmMicrophone();
+            }
+        } else {
             mic_idle_intervals_ = 0;
-            ReArmMicrophone();
         }
     } else {
         mic_idle_intervals_ = 0;
@@ -322,8 +343,11 @@ void Ab13xAudioCodec::OpenSpeaker(uint8_t addr, uint8_t iface_num) {
     const uac_host_device_config_t dev_config = {
         .addr = addr,
         .iface_num = iface_num,
-        .buffer_size = 16384,
-        .buffer_threshold = 4096,
+        // 32 KB is roughly 340 ms of 48 kHz mono PCM. The ring buffer absorbs
+        // short USB scheduling stalls; under normal playback it stays close to
+        // empty, so this does not add latency to speech.
+        .buffer_size = 32768,
+        .buffer_threshold = 8192,
         .callback = DeviceEventCallback,
         .callback_arg = this,
     };
@@ -635,6 +659,41 @@ void Ab13xAudioCodec::ExpandFromMono(const int16_t* src, int frames, int channel
 // AudioCodec interface
 // ---------------------------------------------------------------------------
 
+void Ab13xAudioCodec::ApplyGainAndLimiter(int16_t* data, int samples, float gain) {
+    if (samples <= 0) {
+        return;
+    }
+
+    // Measure the peak AFTER gain but BEFORE any int16 conversion. Clamping the
+    // gained signal first would hard-clip loud syllables and then attenuate the
+    // already-distorted frame; the recognizer would hear the distortion.
+    float frame_peak = 0.0f;
+    for (int i = 0; i < samples; i++) {
+        const float scaled = data[i] * gain;
+        const float magnitude = scaled < 0.0f ? -scaled : scaled;
+        if (magnitude > frame_peak) {
+            frame_peak = magnitude;
+        }
+    }
+
+    const float target = frame_peak > MIC_LIMIT_LEVEL ? MIC_LIMIT_LEVEL / frame_peak : 1.0f;
+    if (target < mic_limiter_gain_) {
+        // Instant attack: clamp this frame as soon as it exceeds the ceiling.
+        mic_limiter_gain_ = target;
+    } else if (mic_limiter_gain_ < 1.0f) {
+        // Slow release so the gain does not pump between syllables.
+        mic_limiter_gain_ += (1.0f - mic_limiter_gain_) * MIC_LIMIT_RELEASE_COEFF;
+        if (mic_limiter_gain_ > 1.0f) {
+            mic_limiter_gain_ = 1.0f;
+        }
+    }
+
+    const float total_gain = gain * mic_limiter_gain_;
+    for (int i = 0; i < samples; i++) {
+        data[i] = static_cast<int16_t>(std::clamp(data[i] * total_gain, -32768.0f, 32767.0f));
+    }
+}
+
 int Ab13xAudioCodec::Read(int16_t* dest, int samples) {
     read_calls_++;
     // No device yet: report no samples. AudioService treats this as "no data".
@@ -684,10 +743,8 @@ int Ab13xAudioCodec::Read(int16_t* dest, int samples) {
     }
 
     if (input_gain_ != 0.0f) {
-        const float gain = std::pow(10.0f, input_gain_ / 20.0f);
-        for (int i = 0; i < samples; i++) {
-            dest[i] = static_cast<int16_t>(std::clamp(dest[i] * gain, -32768.0f, 32767.0f));
-        }
+        // Gain and limiting must be applied in one pass; see ApplyGainAndLimiter.
+        ApplyGainAndLimiter(dest, samples, std::pow(10.0f, input_gain_ / 20.0f));
     }
 
     int32_t peak = 0;
@@ -747,7 +804,16 @@ int Ab13xAudioCodec::Write(const int16_t* data, int samples) {
     esp_err_t ret =
         uac_host_device_write(handle, write_buffer_.data(), want_bytes, pdMS_TO_TICKS(100));
     if (ret != ESP_OK) {
-        ESP_LOGD(TAG, "Speaker write failed: %s", esp_err_to_name(ret));
+        // Dropping a TX chunk is audible, so surface it instead of hiding it at
+        // debug level. Rate-limit the message: a stalled device would otherwise
+        // flood the console from the output task.
+        write_errors_++;
+        const int64_t now = esp_timer_get_time();
+        if (now - last_write_error_log_time_ >= 1000000) {
+            last_write_error_log_time_ = now;
+            ESP_LOGW(TAG, "Speaker write failed: %s (tx errors=%u)", esp_err_to_name(ret),
+                     (unsigned)write_errors_.load());
+        }
     } else {
         write_bytes_ += want_bytes;
     }

@@ -20,8 +20,10 @@ MultiNet wake words, AFE fetch output is passed to `CustomWakeWord`; MultiNet is
 not created on the smaller targets.
 
 The AFE configuration currently uses `FD_LOW_COST` AEC with
-`AEC_NLP_LEVEL_VERYAGGR`. WebRTC/NSNet noise suppression is intentionally
-disabled because the project does not ship an NSNet model.
+`AEC_NLP_LEVEL_VERYAGGR`. Noise suppression is off by default because the
+project does not ship an NSNet model. A codec whose analog front end needs extra
+help can override `AudioCodec::needs_noise_suppression()`; the AFE then uses the
+built-in WebRTC suppressor for that board (the UAC/AB13X headset does this).
 
 When wake-word audio upload is enabled, the most recent two seconds of PCM are
 stored in a single 64 KB PSRAM ring buffer. WakeNet and MultiNet share the same
@@ -95,9 +97,12 @@ activity; the engine refactor does not change that policy.
 
 ## Queue and allocation policy
 
-The service queues use compile-time fixed-capacity storage. Their existing drop,
-wait, and playback-drain policies remain unchanged, but queue growth no longer
-allocates deque nodes. `AudioTask` values are stored directly, and Opus encoding
-writes into the packet payload instead of allocating a second temporary output
-buffer. Packet and PCM buffer pools should only be added after target-side heap
-and latency measurements justify their additional ownership complexity.
+The service queues use compile-time fixed-capacity storage. Microphone audio is
+still realtime and drops the oldest frame when the send path stalls, but the
+downlink decode queue is a jitter buffer: it holds up to 60 s of Opus packets so
+a server that bursts a long TTS reply is played to the end instead of being
+truncated. Queue growth no longer allocates deque nodes. `AudioTask` values are
+stored directly, and Opus encoding writes into the packet payload instead of
+allocating a second temporary output buffer. Packet and PCM buffer pools should
+only be added after target-side heap and latency measurements justify their
+additional ownership complexity.

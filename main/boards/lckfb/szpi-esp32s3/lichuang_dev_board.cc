@@ -9,6 +9,11 @@
 #include "esp32_camera.h"
 #include "mcp_server.h"
 #include "press_to_talk_mcp_tool.h"
+#include "sd_note_store.h"
+
+#if CONFIG_LICHUANG_DEV_UAC_AUDIO
+#include "codecs/ab13x_audio_codec.h"
+#endif
 
 #include <esp_log.h>
 #include <esp_lcd_panel_vendor.h>
@@ -68,6 +73,7 @@ private:
     Pca9557* pca9557_;
     Esp32Camera* camera_;
     PressToTalkMcpTool* press_to_talk_tool_ = nullptr;
+    SdNoteStore note_store_;
 
     void InitializeI2c() {
         // Initialize I2C peripheral
@@ -264,6 +270,62 @@ private:
         camera_ = new Esp32Camera(config);
     }
 
+    void InitializeSdCard() {
+        if (!note_store_.Mount()) {
+            ESP_LOGW(TAG, "SD card not mounted; note tools disabled");
+        }
+    }
+
+    ToolResult SaveNote(const char* type, const char* display_name,
+                        const PropertyList& properties) {
+        const auto& content = properties["content"].value<std::string>();
+        const auto& title = properties["title"].value<std::string>();
+        const auto& tags = properties["tags"].value<std::string>();
+
+        auto result = note_store_.SaveNote(type, display_name, title, content, tags);
+        if (!result) {
+            return std::unexpected(result.error());
+        }
+        if (display_ != nullptr) {
+            display_->ShowNotification(std::string(display_name) + "已保存");
+        }
+        return *result;
+    }
+
+    void RegisterNoteTools() {
+        // Both tools are board-local: they are registered only after an SD card
+        // has been mounted successfully, so boards without usable storage never
+        // advertise an unusable note tool.
+        PropertyList note_properties({
+            Property("content", kPropertyTypeString).SetMaxLength(6000),
+            Property("title", kPropertyTypeString, "").SetMaxLength(120),
+            Property("tags", kPropertyTypeString, "").SetMaxLength(200),
+        });
+
+        auto &mcp_server = McpServer::GetInstance();
+        mcp_server.AddTool(
+            "self.inspiration.capture",
+            "Save an inspiration to the SD card as a Markdown note. Use only when the user "
+            "explicitly asks to capture an inspiration or idea (for example: 记录灵感、灵感胶囊、"
+            "记下这个想法). Do not call for ordinary conversation. Put the idea in `content` in "
+            "the user's own words, with enough context to be useful later. `title` and "
+            "comma-separated `tags` are optional. Returns the saved file path.",
+            note_properties, [this](const PropertyList& properties) -> ToolResult {
+                return SaveNote("inspiration", "灵感胶囊", properties);
+            });
+
+        mcp_server.AddTool(
+            "self.insight.capture",
+            "Save a valuable insight to the SD card as a Markdown note. Use only when the user "
+            "explicitly asks to save an insight or conclusion (for example: 记录洞察、洞察抽屉、"
+            "保存这个结论). Do not call for ordinary conversation. Put the insight in `content`, "
+            "including the reasoning or context that makes it valuable. `title` and "
+            "comma-separated `tags` are optional. Returns the saved file path.",
+            note_properties, [this](const PropertyList& properties) -> ToolResult {
+                return SaveNote("insight", "洞察抽屉", properties);
+            });
+    }
+
     void InitializeTools() {
         auto &mcp_server = McpServer::GetInstance();
         mcp_server.AddTool("self.system.reconfigure_wifi",
@@ -277,6 +339,10 @@ private:
         // Allow switching between press-to-talk (长按说话) and click-to-talk (单击唤醒)
         press_to_talk_tool_ = new PressToTalkMcpTool();
         press_to_talk_tool_->Initialize();
+
+        if (note_store_.mounted()) {
+            RegisterNoteTools();
+        }
     }
 
 public:
@@ -287,16 +353,24 @@ public:
         InitializeTouch();
         InitializeButtons();
         InitializeCamera();
+        InitializeSdCard();
         InitializeTools();
 
         GetBacklight()->RestoreBrightness();
     }
 
     virtual AudioCodec* GetAudioCodec() override {
+#if CONFIG_LICHUANG_DEV_UAC_AUDIO
+        // UAC build preset: use a USB UAC 1.0 headset (for example an AB13X
+        // adapter) instead of the onboard ES7210/ES8311 path.
+        static Ab13xAudioCodec audio_codec;
+        return &audio_codec;
+#else
         static CustomAudioCodec audio_codec(
             i2c_bus_, 
             pca9557_);
         return &audio_codec;
+#endif
     }
 
     virtual Display* GetDisplay() override {

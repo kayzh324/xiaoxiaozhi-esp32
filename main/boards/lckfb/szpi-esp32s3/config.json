@@ -9,6 +9,14 @@
                 "CONFIG_USE_DEVICE_AEC=y",
                 "CONFIG_CAMERA_PSRAM_DMA=y"
             ]
+        },
+        {
+            "name": "lichuang-dev-uac",
+            "sdkconfig_append": [
+                "CONFIG_LICHUANG_DEV_UAC_AUDIO=y",
+                "CONFIG_USE_SERVER_AEC=y",
+                "CONFIG_CAMERA_PSRAM_DMA=y"
+            ]
         }
     ]
 }

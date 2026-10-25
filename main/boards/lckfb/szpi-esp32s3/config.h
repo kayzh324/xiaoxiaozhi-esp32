@@ -20,6 +20,13 @@
 #define AUDIO_CODEC_ES8311_ADDR  ES8311_CODEC_DEFAULT_ADDR
 #define AUDIO_CODEC_ES7210_ADDR  0x82
 
+// Micro SD card, 1-bit SDIO mode.
+#define SD_CARD_CLK_PIN GPIO_NUM_47
+#define SD_CARD_CMD_PIN GPIO_NUM_48
+#define SD_CARD_D0_PIN  GPIO_NUM_21
+#define SD_CARD_MOUNT_POINT "/sdcard"
+#define SD_CARD_NOTES_ROOT  "/sdcard/xiaozhi-notes"
+
 #define BUILTIN_LED_GPIO        GPIO_NUM_48
 #define BOOT_BUTTON_GPIO        GPIO_NUM_0
 #define VOLUME_UP_BUTTON_GPIO   GPIO_NUM_NC

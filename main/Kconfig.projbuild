@@ -643,6 +643,19 @@ choice BOARD_TYPE
         depends on IDF_TARGET_ESP32S3
 endchoice
 
+config LICHUANG_DEV_UAC_AUDIO
+    bool "LCKFB SZPI ESP32-S3: use USB UAC headset audio"
+    depends on BOARD_TYPE_LICHUANG_DEV_S3
+    default n
+    help
+        Use a USB UAC 1.0 headset (for example an AB13X adapter) instead of
+        the onboard ES7210/ES8311 audio. The UAC build preset also selects
+        server-side AEC because a headset has no echo-reference channel.
+
+        The stock LCKFB board routes the ESP32 USB-OTG port through a
+        downstream port of the CH334F hub, so UAC host operation requires a
+        direct USB host connection or a hardware modification.
+
 choice XIAOZHI_NETWORK_TYPE
     prompt "Network Type"
     depends on BOARD_TYPE_WAVESHARE_ESP32_P4_NANO

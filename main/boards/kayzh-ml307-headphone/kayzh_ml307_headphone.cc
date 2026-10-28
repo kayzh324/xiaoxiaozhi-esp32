@@ -422,12 +422,25 @@ private:
             volume = 0;
         }
         codec->SetOutputVolume(volume);
+        ESP_LOGI(TAG, "volume -> %d", volume);
         GetDisplay()->ShowNotification(Lang::Strings::VOLUME + std::to_string(volume));
     }
 
+    // 方向键按下立刻打一行（带 GPIO），用于核对「物理方向 ↔ 模块丝印触点」的映射：
+    // 按下即出日志，不用等 click/长按判定。方向名是硬件朝向，见 config.h。
+    static void LogKeyDown(const char* dir, int gpio) {
+        ESP_LOGI(TAG, "KEY %s down (gpio=%d)", dir, gpio);
+    }
+
     void InitializeButtons() {
+        f_button_.OnPressDown([]() { LogKeyDown("UP", F_BUTTON_GPIO); });
+        b_button_.OnPressDown([]() { LogKeyDown("DOWN", B_BUTTON_GPIO); });
+        r_button_.OnPressDown([]() { LogKeyDown("RIGHT", R_BUTTON_GPIO); });
+        l_button_.OnPressDown([]() { LogKeyDown("LEFT", L_BUTTON_GPIO); });
+        m_button_.OnPressDown([]() { LogKeyDown("CENTER", M_BUTTON_GPIO); });
         // 中键：单击对话 / 菜单确认；长按打断播报；双击（启动态）切换网络
         m_button_.OnClick([this]() {
+            ESP_LOGI(TAG, "key: M click");
             if (MenuVisible()) {
                 Application::GetInstance().Schedule([this]() { MenuConfirm(); });
                 return;
@@ -435,12 +448,14 @@ private:
             Application::GetInstance().ToggleChatState();
         });
         m_button_.OnLongPress([this]() {
+            ESP_LOGI(TAG, "key: M long");
             if (MenuVisible()) {
                 return;
             }
             Application::GetInstance().AbortSpeaking(kAbortReasonNone);
         });
         m_button_.OnDoubleClick([this]() {
+            ESP_LOGI(TAG, "key: M double");
             if (MenuVisible()) {
                 return;
             }
@@ -452,6 +467,7 @@ private:
 
         // 前键（上）：单击音量+10，长按最大音量；菜单内单击上移
         f_button_.OnClick([this]() {
+            ESP_LOGI(TAG, "key: F(up) click");
             if (MenuVisible()) {
                 Application::GetInstance().Schedule([this]() { MenuMove(-1); });
                 return;
@@ -459,6 +475,7 @@ private:
             AdjustVolume(10);
         });
         f_button_.OnLongPress([this]() {
+            ESP_LOGI(TAG, "key: F(up) long");
             if (MenuVisible()) {
                 return;
             }
@@ -468,6 +485,7 @@ private:
 
         // 后键（下）：单击音量-10，长按静音；菜单内单击下移
         b_button_.OnClick([this]() {
+            ESP_LOGI(TAG, "key: B(down) click");
             if (MenuVisible()) {
                 Application::GetInstance().Schedule([this]() { MenuMove(1); });
                 return;
@@ -475,6 +493,7 @@ private:
             AdjustVolume(-10);
         });
         b_button_.OnLongPress([this]() {
+            ESP_LOGI(TAG, "key: B(down) long");
             if (MenuVisible()) {
                 return;
             }
@@ -484,6 +503,7 @@ private:
 
         // 右键：单击循环背光亮度（100/60/30/10），长按进入 WiFi 配网（仅 WiFi）
         r_button_.OnClick([this]() {
+            ESP_LOGI(TAG, "key: R(physical right) click");
             if (MenuVisible()) {
                 return;
             }
@@ -500,6 +520,7 @@ private:
             GetDisplay()->ShowNotification("亮度 " + std::to_string(next));
         });
         r_button_.OnLongPress([this]() {
+            ESP_LOGI(TAG, "key: R(physical right) long");
             if (MenuVisible()) {
                 return;
             }
@@ -513,6 +534,7 @@ private:
 
         // 左键：单击切换主题（亮/暗），长按 3 秒进入身份选择（菜单内单击取消）
         l_button_.OnClick([this]() {
+            ESP_LOGI(TAG, "key: L(physical left) click");
             if (MenuVisible()) {
                 Application::GetInstance().Schedule([this]() { MenuCancel(); });
                 return;
@@ -528,6 +550,7 @@ private:
             }
         });
         l_button_.OnLongPress([this]() {
+            ESP_LOGI(TAG, "key: L(physical left) long");
             if (MenuVisible()) {
                 return;
             }

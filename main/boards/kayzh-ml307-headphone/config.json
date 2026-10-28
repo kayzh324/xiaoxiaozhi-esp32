@@ -5,7 +5,7 @@
         {
             "name": "kayzh-ml307-headphone",
             "sdkconfig_append": [
-                "CONFIG_USE_SERVER_AEC=y"
+                "CONFIG_WAKE_WORD_DISABLED=y"
             ]
         }
     ]

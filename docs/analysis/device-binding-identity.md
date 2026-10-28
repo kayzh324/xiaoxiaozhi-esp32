@@ -321,3 +321,51 @@ I (19993) MQTT: Session ID: c137f82a        → listening -> speaking -> listeni
 2. 屏幕只能显示 `ID:N`（设备端拿不到 agent 名字，OTA 响应无该字段），想显示"工作/家里"得靠本地映射表
 3. 切换入口只有 M 键 + MCP 工具，没有配网页/App 入口
 4. 槽位上限 8（`kMaxCount`），NVS 空间够但没做容量核算
+
+---
+
+## 11. 正式版（身份选择浮层）交付与两个 bug 复盘
+
+### 交付形态
+
+| 项 | 实现 |
+|---|---|
+| 入口 | L 键长按 3 秒 → 全屏 LVGL 浮层（`lv_obj_create(lv_screen_active())`，暗底 90% 不透明，垂直居中 flex） |
+| 列表 | 恒定 6 行：标题 + 4 槽 + 提示行；`LV_LABEL_LONG_DOT` 单行不换行；高度核算 `6×21 + 5×4 + 8 = 154px < 170px` |
+| 键位 | 菜单内 F/B 移动（不循环）、M 确认、L 取消、10s 超时；菜单外 F/B 音量、R 亮度/配网、L 主题、M 对话/长按打断播报 |
+| 槽名 | NVS `identity/name<N>`，默认 情绪聊天/顾问咨询/思考伙伴/自定义 |
+| 防误激活 | 浏览不写 NVS；未配置槽需二次确认；已配置槽提示「换绑需后台删设备后重启」 |
+
+### bug 1：菜单渲染走了聊天通道（我给的规格错）
+
+第一版让下属用 `display->SetChatMessage("system", ...)` 渲染菜单。`SetChatMessage` 是把气泡 widget 追加到 `content_` 容器（`lcd_display.cc:542+`），天生贴在屏幕底部且有高度上限 → 菜单被裁切、屏幕中央仍是表情图，用户只能摸黑按键。
+
+**教训：菜单/对话框这类"覆盖式 UI"不能用聊天消息通道渲染。** 这块板是 LVGL，正解是自建浮层 + `DisplayLockGuard`，子对象自动继承 `SetupUI()` 设在 screen 上的主题字体（`lcd_display.cc:404`），中文无需额外字体工作。
+
+### bug 2：已配置槽分支忘了落盘槽位（最隐蔽）
+
+```cpp
+// 未配置分支：写了 NVS
+if (!Identity::SelectSlot(slot)) return;
+RebootSoon(300);
+
+// 已配置分支（最初）：只弹提示 + 重启，槽位从未写入
+display->ShowNotification("切换到 " + name);
+RebootSoon(800);
+```
+
+症状：**选任何已配置槽 → 重启后仍是原槽**；连带"后台删了设备重启却不出码"（因为根本没切到那个身份）。
+
+**定位方法（可复用）：`SelectSlot()` 里有 `ESP_LOGI("Identity slot selected: %d")`，日志里连续 4 次 `Application: Rebooting...` 却一次都没有这行 → 说明"重启发生了但槽位没写"**，一眼锁定分支漏调用。
+
+**教训：凡是"改变持久状态 + 重启"的路径，必须在两条（或以上）分支上都留一条能区分"写没写"的日志，并且重启前先落盘。**
+
+### 真机验证（2026-10-28，全部通过）
+
+```
+slot=0 情绪聊天 → Alert 激活设备 → Ota: Activation successful(22.5s) → Session 72a2d465   ← 后台删设备后重新绑定
+slot selected: 2 → slot=2 思考伙伴 → Alert 激活 → Activation successful → Session 53deb4fc ← 新槽绑定
+slot selected: 0 → slot=0 → Activation done（无 Alert）→ Session 93dfbcab                  ← 来回切换不出码
+slot selected: 1 → slot=1 顾问咨询 → Activation successful → Sessions 7bac4753/3f2219e4/b6d9432d
+E 行：仅 1 条 uac-host 枚举瞬态（已知良性）
+```

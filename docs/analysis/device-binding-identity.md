@@ -369,3 +369,28 @@ slot selected: 0 → slot=0 → Activation done（无 Alert）→ Session 93dfbc
 slot selected: 1 → slot=1 顾问咨询 → Activation successful → Sessions 7bac4753/3f2219e4/b6d9432d
 E 行：仅 1 条 uac-host 枚举瞬态（已知良性）
 ```
+
+### bug 3：MCP 身份工具「模型说改好了，其实没改」
+
+现象：对设备说「把第 4 个槽改名」，小智回「改好了」，但设备 UI 没变化。
+
+排查卡住的点：**代码里没有任何一条成功路径的日志**，所以当时无法区分「模型根本没调用」和「调用了并成功」。先补观测再判断，是唯一正确的动作。
+
+修完日志后一次就定位到两个独立缺陷：
+
+1. **`identity.*` 原本是 `AddUserOnlyTool`**：`tools/list` 只在客户端带 `with_user_tools=1` 时列出这类工具（`mcp_server.cc:602`），是否下发由云端决定 → 模型可能压根不知道有这个工具。改成普通 `AddTool`（D 设备私人使用、无声纹门禁，用户明确接受该风险）。
+2. **编号错位**：内部 0..3，而人对模型说「第 4 个」→ `slot=4` 被 `slot >= count` 直接拒绝。改成对外 1..4（内部 −1），`list` 输出 1-based，**菜单行也加序号** `1.情绪聊天`，让人和模型使用同一套编号。
+
+修好后的真机证据：
+
+```
+I (37078) MCP: tools/call: id=3 name=self.identity.rename args={"slot":4,"name":"工作"}
+I (37078) Identity: Identity slot 3 renamed to 工作
+I (58998) MCP: tools/call: id=3 name=self.identity.rename args={"slot":4,"name":"灵感胶囊"}
+I (59008) Identity: Identity slot 3 renamed to 灵感胶囊
+```
+
+**教训（三条，写进技能）：**
+- 模型自述 ≠ 结果。凡是"设备会执行某个动作"的能力，**必须在执行入口打一条带参数的日志**，否则永远无法对账。
+- 面向人的编号和面向机器的编号必须统一。对 LLM 暴露的 `slot` 用 1-based，屏幕上的行也标 1..4，否则"第 4 个"必然错位。
+- `AddUserOnlyTool` 不等于"模型可见"：它取决于云端是否请求 user tools。给对话助手用的工具就该用 `AddTool`。

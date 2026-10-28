@@ -1,6 +1,7 @@
 #include "mqtt_protocol.h"
 #include "application.h"
 #include "board.h"
+#include "identity.h"
 #include "settings.h"
 
 #include <esp_log.h>
@@ -77,7 +78,7 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
         mqtt_.reset();
     }
 
-    Settings settings("mqtt", false);
+    Settings settings(Identity::CredentialNamespace("mqtt"), false);
     auto endpoint = settings.GetString("endpoint");
     auto client_id = settings.GetString("client_id");
     auto username = settings.GetString("username");

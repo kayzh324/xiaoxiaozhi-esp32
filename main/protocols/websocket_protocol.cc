@@ -1,6 +1,7 @@
 #include "websocket_protocol.h"
 #include "application.h"
 #include "board.h"
+#include "identity.h"
 #include "settings.h"
 #include "system_info.h"
 
@@ -77,7 +78,7 @@ void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
 }
 
 bool WebsocketProtocol::OpenAudioChannel() {
-    Settings settings("websocket", false);
+    Settings settings(Identity::CredentialNamespace("websocket"), false);
     std::string url = settings.GetString("url");
     std::string token = settings.GetString("token");
     int version = settings.GetInt("version");
@@ -102,7 +103,7 @@ bool WebsocketProtocol::OpenAudioChannel() {
         websocket_->SetHeader("Authorization", token.c_str());
     }
     websocket_->SetHeader("Protocol-Version", std::to_string(version_).c_str());
-    websocket_->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());
+    websocket_->SetHeader("Device-Id", SystemInfo::GetDeviceId().c_str());
     websocket_->SetHeader("Client-Id", Board::GetInstance().GetUuid().c_str());
 
     websocket_->OnData([this](const char* data, size_t len, bool binary) {

@@ -1,4 +1,5 @@
 #include "system_info.h"
+#include "identity.h"
 
 #include <freertos/task.h>
 #include <esp_log.h>
@@ -44,6 +45,10 @@ std::string SystemInfo::GetMacAddress() {
     char mac_str[18];
     snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     return std::string(mac_str);
+}
+
+std::string SystemInfo::GetDeviceId() {
+    return Identity::Active().device_id;
 }
 
 std::string SystemInfo::GetChipModelName() {

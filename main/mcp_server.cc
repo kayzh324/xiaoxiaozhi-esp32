@@ -15,6 +15,7 @@
 #include "application.h"
 #include "board.h"
 #include "display.h"
+#include "identity.h"
 #include "lvgl_image.h"
 #include "lvgl_theme.h"
 #include "settings.h"
@@ -136,6 +137,25 @@ void McpServer::AddUserOnlyTools() {
                             ESP_LOGW(TAG, "User requested reboot");
                             vTaskDelay(pdMS_TO_TICKS(1000));
 
+                            app.Reboot();
+                        });
+                        return true;
+                    });
+
+    AddUserOnlyTool("self.identity.select",
+                    "Switch the device to another identity slot (profile) and reboot. Each slot is a "
+                    "separate device binding with its own activation code.",
+                    PropertyList({Property("slot", kPropertyTypeInteger, 0, 15)}),
+                    [this](const PropertyList& properties) -> ToolResult {
+                        int slot = properties["slot"].value<int>();
+                        if (!Identity::SelectSlot(slot)) {
+                            return std::unexpected("Invalid identity slot (valid: 0.." +
+                                                   std::to_string(Identity::GetCount() - 1) + ")");
+                        }
+                        auto& app = Application::GetInstance();
+                        app.Schedule([&app]() {
+                            ESP_LOGW(TAG, "Identity slot selected, rebooting");
+                            vTaskDelay(pdMS_TO_TICKS(500));
                             app.Reboot();
                         });
                         return true;

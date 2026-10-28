@@ -6,6 +6,7 @@
 #include "display/lcd_display.h"
 #include "display/lvgl_display/lvgl_theme.h"
 #include "dual_network_board.h"
+#include "identity.h"
 #include "lamp_controller.h"
 #include "led/single_led.h"
 #include "mcp_server.h"
@@ -90,8 +91,19 @@ private:
     }
 
     void InitializeButtons() {
-        // 中键：单击触发连续对话；双击（启动态）切换网络
+        // 中键：单击触发连续对话；长按 3 秒轮换身份槽并重启；双击（启动态）切换网络
         m_button_.OnClick([]() { Application::GetInstance().ToggleChatState(); });
+        m_button_.OnLongPress([]() {
+            int slot = Identity::CycleSlot();
+            if (auto display = Board::GetInstance().GetDisplay()) {
+                display->ShowNotification("ID:" + std::to_string(slot), 1000);
+            }
+            auto& app = Application::GetInstance();
+            app.Schedule([&app]() {
+                vTaskDelay(pdMS_TO_TICKS(500));
+                app.Reboot();
+            });
+        });
         m_button_.OnDoubleClick([this]() {
             auto state = Application::GetInstance().GetDeviceState();
             if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
@@ -156,7 +168,7 @@ private:
 public:
     KayzhML307Headphone()
         : DualNetworkBoard(ML307_TX_PIN, ML307_RX_PIN, GPIO_NUM_NC),
-          m_button_(M_BUTTON_GPIO),
+          m_button_(M_BUTTON_GPIO, false, 3000),
           f_button_(F_BUTTON_GPIO),
           b_button_(B_BUTTON_GPIO),
           r_button_(R_BUTTON_GPIO),
@@ -166,6 +178,17 @@ public:
         InitializeButtons();
         InitializeTools();
         GetBacklight()->RestoreBrightness();
+    }
+
+    virtual void StartNetwork() override {
+        DualNetworkBoard::StartNetwork();
+        // Slot 0 is the real identity: keep the boot screen exactly as before.
+        int slot = Identity::GetSlot();
+        if (slot != 0) {
+            if (auto display = GetDisplay()) {
+                display->ShowNotification("ID:" + std::to_string(slot), 5000);
+            }
+        }
     }
 
     virtual Led* GetLed() override {

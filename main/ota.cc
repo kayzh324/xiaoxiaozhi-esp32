@@ -1,4 +1,5 @@
 #include "ota.h"
+#include "identity.h"
 #include "system_info.h"
 #include "settings.h"
 #include "assets/lang_config.h"
@@ -48,6 +49,7 @@ Ota::Ota() {
         }
     }
 #endif
+    Identity::LogActive(has_serial_number_);
 }
 
 Ota::~Ota() {
@@ -67,10 +69,12 @@ std::unique_ptr<Http> Ota::SetupHttp() {
     auto network = board.GetNetwork();
     auto http = network->CreateHttp(0);
     auto user_agent = SystemInfo::GetUserAgent();
-    http->SetHeader("Activation-Version", has_serial_number_ ? "2" : "1");
-    http->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());
+    // Synthetic identity slots force activation v1: no eFuse serial, no HMAC.
+    const bool force_v1 = Identity::ForcesV1();
+    http->SetHeader("Activation-Version", (force_v1 || !has_serial_number_) ? "1" : "2");
+    http->SetHeader("Device-Id", SystemInfo::GetDeviceId().c_str());
     http->SetHeader("Client-Id", board.GetUuid());
-    if (has_serial_number_) {
+    if (has_serial_number_ && !force_v1) {
         http->SetHeader("Serial-Number", serial_number_.c_str());
         ESP_LOGI(TAG, "Setup HTTP, User-Agent: %s, Serial-Number: %s", user_agent.c_str(), serial_number_.c_str());
     }
@@ -159,7 +163,7 @@ NetworkResult<> Ota::CheckVersion() {
     has_mqtt_config_ = false;
     cJSON *mqtt = cJSON_GetObjectItem(root, "mqtt");
     if (cJSON_IsObject(mqtt)) {
-        Settings settings("mqtt", true);
+        Settings settings(Identity::CredentialNamespace("mqtt"), true);
         cJSON *item = NULL;
         cJSON_ArrayForEach(item, mqtt) {
             if (cJSON_IsString(item)) {
@@ -180,7 +184,7 @@ NetworkResult<> Ota::CheckVersion() {
     has_websocket_config_ = false;
     cJSON *websocket = cJSON_GetObjectItem(root, "websocket");
     if (cJSON_IsObject(websocket)) {
-        Settings settings("websocket", true);
+        Settings settings(Identity::CredentialNamespace("websocket"), true);
         cJSON *item = NULL;
         cJSON_ArrayForEach(item, websocket) {
             if (cJSON_IsString(item)) {
@@ -465,7 +469,7 @@ bool Ota::IsNewVersionAvailable(const std::string& currentVersion, const std::st
 }
 
 std::string Ota::GetActivationPayload() {
-    if (!has_serial_number_) {
+    if (!has_serial_number_ || Identity::ForcesV1()) {
         return "{}";
     }
 

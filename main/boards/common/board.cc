@@ -1,6 +1,7 @@
 #include "board.h"
 #include "assets/lang_config.h"
 #include "display/display.h"
+#include "identity.h"
 #include "settings.h"
 #include "system_info.h"
 
@@ -19,6 +20,14 @@ Board::Board() {
         settings.SetString("uuid", uuid_);
     }
     ESP_LOGI(TAG, "UUID=%s SKU=%s", uuid_.c_str(), BOARD_NAME);
+}
+
+std::string Board::GetUuid() {
+    // Slot 0 keeps the exact historical behaviour: the NVS board/uuid value.
+    if (Identity::GetSlot() == 0) {
+        return uuid_;
+    }
+    return Identity::Active().uuid;
 }
 
 std::string Board::GenerateUuid() {
@@ -102,8 +111,8 @@ std::string Board::GetSystemInfoJson() {
     json += R"("flash_size":)" + std::to_string(SystemInfo::GetFlashSize()) + R"(,)";
     json += R"("minimum_free_heap_size":")" + std::to_string(SystemInfo::GetMinimumFreeHeapSize()) +
             R"(",)";
-    json += R"("mac_address":")" + SystemInfo::GetMacAddress() + R"(",)";
-    json += R"("uuid":")" + uuid_ + R"(",)";
+    json += R"("mac_address":")" + SystemInfo::GetDeviceId() + R"(",)";
+    json += R"("uuid":")" + GetUuid() + R"(",)";
     json += R"("chip_model_name":")" + SystemInfo::GetChipModelName() + R"(",)";
 
     esp_chip_info_t chip_info;

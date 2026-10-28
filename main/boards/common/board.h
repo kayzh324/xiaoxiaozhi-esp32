@@ -66,7 +66,7 @@ public:
 
     virtual ~Board() = default;
     virtual std::string GetBoardType() = 0;
-    virtual std::string GetUuid() { return uuid_; }
+    virtual std::string GetUuid();
     virtual Backlight* GetBacklight() { return nullptr; }
     virtual Led* GetLed();
     virtual AudioCodec* GetAudioCodec() = 0;

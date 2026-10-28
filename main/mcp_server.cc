@@ -142,15 +142,18 @@ void McpServer::AddUserOnlyTools() {
                         return true;
                     });
 
-    AddUserOnlyTool("self.identity.select",
+    // Identity tools are plain (non user-only) tools: they are needed by the assistant during a
+    // normal conversation, and this is a personal device with no voiceprint gate to protect them.
+    AddTool("self.identity.select",
                     "Switch the device to another identity slot (profile) and reboot. Each slot is a "
-                    "separate device binding with its own activation code.",
-                    PropertyList({Property("slot", kPropertyTypeInteger, 0, 15)}),
+                    "separate device binding with its own activation code. Slot numbers start at 1.",
+                    PropertyList({Property("slot", kPropertyTypeInteger, 1, Identity::GetCount())}),
                     [this](const PropertyList& properties) -> ToolResult {
-                        int slot = properties["slot"].value<int>();
+                        // 1-based on the wire, 0-based inside.
+                        int slot = properties["slot"].value<int>() - 1;
                         if (!Identity::SelectSlot(slot)) {
-                            return std::unexpected("Invalid identity slot (valid: 0.." +
-                                                   std::to_string(Identity::GetCount() - 1) + ")");
+                            return std::unexpected("Invalid identity slot (valid: 1.." +
+                                                   std::to_string(Identity::GetCount()) + ")");
                         }
                         auto name = Identity::GetName(slot);
                         auto& app = Application::GetInstance();
@@ -162,16 +165,16 @@ void McpServer::AddUserOnlyTools() {
                         return "Switching to " + name + ", rebooting";
                     });
 
-    AddUserOnlyTool("self.identity.list",
-                    "List the identity slots (profiles) of this device: slot number, display name, "
-                    "whether the slot has server credentials, and which slot is currently active.",
+    AddTool("self.identity.list",
+                    "List the identity slots (profiles) of this device: slot number (starts at 1), "
+                    "display name, whether the slot has server credentials, and which slot is active.",
                     PropertyList(), [](const PropertyList& properties) -> ReturnValue {
                         CJsonUniquePtr json(cJSON_CreateArray());
                         int current = Identity::GetSlot();
                         int count = Identity::GetCount();
                         for (int i = 0; i < count; ++i) {
                             cJSON* item = cJSON_CreateObject();
-                            cJSON_AddNumberToObject(item, "slot", i);
+                            cJSON_AddNumberToObject(item, "slot", i + 1);
                             cJSON_AddStringToObject(item, "name", Identity::GetName(i).c_str());
                             cJSON_AddBoolToObject(item, "configured", Identity::IsConfigured(i));
                             cJSON_AddBoolToObject(item, "current", i == current);
@@ -183,17 +186,18 @@ void McpServer::AddUserOnlyTools() {
                         return result;
                     });
 
-    AddUserOnlyTool("self.identity.rename",
-                    "Give an identity slot (profile) a new display name. The name is shown on the "
-                    "device screen; at most 24 bytes (about 8 Chinese characters).",
-                    PropertyList({Property("slot", kPropertyTypeInteger, 0, 15),
+    AddTool("self.identity.rename",
+                    "Give an identity slot (profile) a new display name. Slot numbers start at 1. "
+                    "The name is shown on the device screen; at most 24 bytes (about 8 Chinese characters).",
+                    PropertyList({Property("slot", kPropertyTypeInteger, 1, Identity::GetCount()),
                                   Property("name", kPropertyTypeString)}),
                     [](const PropertyList& properties) -> ToolResult {
-                        int slot = properties["slot"].value<int>();
+                        // 1-based on the wire, 0-based inside.
+                        int slot = properties["slot"].value<int>() - 1;
                         auto name = properties["name"].value<std::string>();
                         if (slot < 0 || slot >= Identity::GetCount()) {
-                            return std::unexpected("Invalid identity slot (valid: 0.." +
-                                                   std::to_string(Identity::GetCount() - 1) + ")");
+                            return std::unexpected("Invalid identity slot (valid: 1.." +
+                                                   std::to_string(Identity::GetCount()) + ")");
                         }
                         if (name.empty()) {
                             return std::unexpected("Identity name must not be empty");
@@ -204,7 +208,7 @@ void McpServer::AddUserOnlyTools() {
                         if (!Identity::SetName(slot, name)) {
                             return std::unexpected("Failed to store the identity name");
                         }
-                        return true;
+                        return "Renamed slot " + std::to_string(slot + 1) + " to \"" + name + "\"";
                     });
 
     // Firmware upgrade
@@ -640,6 +644,13 @@ void McpServer::GetToolsList(int id, const std::string& cursor, bool list_user_o
 
 void McpServer::DoToolCall(int id, const std::string& tool_name, const cJSON* tool_arguments,
                            ResponseSender response_sender) {
+    // Log every call: without this there was no way to tell "the model never called the tool"
+    // apart from "the tool ran and the model made up the result".
+    CJsonStringUniquePtr args_json(
+        tool_arguments != nullptr ? cJSON_PrintUnformatted(tool_arguments) : nullptr);
+    ESP_LOGI(TAG, "tools/call: id=%d name=%s args=%s", id, tool_name.c_str(),
+             args_json != nullptr ? args_json.get() : "{}");
+
     auto tool_iter = std::find_if(tools_.begin(), tools_.end(), [&tool_name](const auto& tool) {
         return tool->name() == tool_name;
     });

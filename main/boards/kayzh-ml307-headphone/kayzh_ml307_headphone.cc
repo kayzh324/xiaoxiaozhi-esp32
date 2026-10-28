@@ -159,7 +159,7 @@ private:
             if (i >= count) {
                 continue;
             }
-            std::string body = Identity::GetName(i);
+            std::string body = std::to_string(i + 1) + "." + Identity::GetName(i);
             body += "  ";
             body += Identity::IsConfigured(i) ? "已配置" : "未配置";
             // " 当前" costs 6 columns. Budget is 12 Chinese chars (24 columns)

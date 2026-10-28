@@ -28,8 +28,14 @@ public:
     static bool ForcesV1();
     static std::string CredentialNamespace(const std::string& base);
 
+    /// Display name for a slot (NVS identity/name<N>, default table below).
+    static std::string GetName(int slot);
+    static bool SetName(int slot, const std::string& name);
+    /// True when the slot already holds server-issued MQTT credentials.
+    /// Read-only: never triggers the legacy migration.
+    static bool IsConfigured(int slot);
+
     static bool SelectSlot(int slot);
-    static int CycleSlot();
     static void LogActive(bool has_serial_number);
 
 private:

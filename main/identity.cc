@@ -12,8 +12,15 @@
 
 namespace {
 
-constexpr int kDefaultCount = 3;
-constexpr int kMaxCount = 8;
+constexpr int kDefaultCount = 4;
+constexpr int kMaxCount = 4;
+constexpr int kMaxNameBytes = 24;
+
+const char* const kDefaultNames[kMaxCount] = {"情绪聊天", "顾问咨询", "思考伙伴", "自定义"};
+
+std::string NameKey(int slot) {
+    return "name" + std::to_string(slot);
+}
 
 std::string SlotKey(int slot, const char* suffix) {
     char key[16];
@@ -190,16 +197,46 @@ bool Identity::SelectSlot(int slot) {
     return true;
 }
 
-int Identity::CycleSlot() {
-    int next = (GetSlot() + 1) % GetCount();
-    SelectSlot(next);
-    return next;
+std::string Identity::GetName(int slot) {
+    if (slot < 0 || slot >= kMaxCount) {
+        return "";
+    }
+    Settings settings("identity", false);
+    auto name = settings.GetString(NameKey(slot));
+    if (!name.empty()) {
+        return name;
+    }
+    return kDefaultNames[slot];
+}
+
+bool Identity::SetName(int slot, const std::string& name) {
+    if (slot < 0 || slot >= GetCount()) {
+        ESP_LOGW(TAG, "Rejecting rename for slot %d (count=%d)", slot, GetCount());
+        return false;
+    }
+    if (name.empty() || name.size() > kMaxNameBytes) {
+        ESP_LOGW(TAG, "Rejecting identity name of %zu bytes", name.size());
+        return false;
+    }
+    Settings settings("identity", true);
+    settings.SetString(NameKey(slot), name);
+    ESP_LOGI(TAG, "Identity slot %d renamed to %s", slot, name.c_str());
+    return true;
+}
+
+bool Identity::IsConfigured(int slot) {
+    if (slot < 0 || slot >= GetCount()) {
+        return false;
+    }
+    // Read-only on purpose: the selection UI must never write NVS.
+    Settings settings("mqtt" + std::to_string(slot), false);
+    return !settings.GetString("endpoint").empty();
 }
 
 void Identity::LogActive(bool has_serial_number) {
     const Profile profile = Active();
     const int activation_version = (profile.force_v1 || !has_serial_number) ? 1 : 2;
-    ESP_LOGI(TAG, "slot=%d device_id=%s uuid=%s mode=%s activation_version=%d", profile.slot,
-             profile.device_id.c_str(), profile.uuid.c_str(),
-             profile.force_v1 ? "v1" : "hw", activation_version);
+    ESP_LOGI(TAG, "slot=%d name=%s device_id=%s uuid=%s mode=%s activation_version=%d",
+             profile.slot, GetName(profile.slot).c_str(), profile.device_id.c_str(),
+             profile.uuid.c_str(), profile.force_v1 ? "v1" : "hw", activation_version);
 }

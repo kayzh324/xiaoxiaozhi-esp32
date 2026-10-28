@@ -152,12 +152,58 @@ void McpServer::AddUserOnlyTools() {
                             return std::unexpected("Invalid identity slot (valid: 0.." +
                                                    std::to_string(Identity::GetCount() - 1) + ")");
                         }
+                        auto name = Identity::GetName(slot);
                         auto& app = Application::GetInstance();
                         app.Schedule([&app]() {
                             ESP_LOGW(TAG, "Identity slot selected, rebooting");
                             vTaskDelay(pdMS_TO_TICKS(500));
                             app.Reboot();
                         });
+                        return "Switching to " + name + ", rebooting";
+                    });
+
+    AddUserOnlyTool("self.identity.list",
+                    "List the identity slots (profiles) of this device: slot number, display name, "
+                    "whether the slot has server credentials, and which slot is currently active.",
+                    PropertyList(), [](const PropertyList& properties) -> ReturnValue {
+                        CJsonUniquePtr json(cJSON_CreateArray());
+                        int current = Identity::GetSlot();
+                        int count = Identity::GetCount();
+                        for (int i = 0; i < count; ++i) {
+                            cJSON* item = cJSON_CreateObject();
+                            cJSON_AddNumberToObject(item, "slot", i);
+                            cJSON_AddStringToObject(item, "name", Identity::GetName(i).c_str());
+                            cJSON_AddBoolToObject(item, "configured", Identity::IsConfigured(i));
+                            cJSON_AddBoolToObject(item, "current", i == current);
+                            cJSON_AddItemToArray(json.get(), item);
+                        }
+                        char* text = cJSON_PrintUnformatted(json.get());
+                        std::string result(text != nullptr ? text : "[]");
+                        cJSON_free(text);
+                        return result;
+                    });
+
+    AddUserOnlyTool("self.identity.rename",
+                    "Give an identity slot (profile) a new display name. The name is shown on the "
+                    "device screen; at most 24 bytes (about 8 Chinese characters).",
+                    PropertyList({Property("slot", kPropertyTypeInteger, 0, 15),
+                                  Property("name", kPropertyTypeString)}),
+                    [](const PropertyList& properties) -> ToolResult {
+                        int slot = properties["slot"].value<int>();
+                        auto name = properties["name"].value<std::string>();
+                        if (slot < 0 || slot >= Identity::GetCount()) {
+                            return std::unexpected("Invalid identity slot (valid: 0.." +
+                                                   std::to_string(Identity::GetCount() - 1) + ")");
+                        }
+                        if (name.empty()) {
+                            return std::unexpected("Identity name must not be empty");
+                        }
+                        if (name.size() > 24) {
+                            return std::unexpected("Identity name must be at most 24 bytes");
+                        }
+                        if (!Identity::SetName(slot, name)) {
+                            return std::unexpected("Failed to store the identity name");
+                        }
                         return true;
                     });
 
